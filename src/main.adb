@@ -264,103 +264,6 @@ procedure main is
       RTC_Periph.WPR.KEY := 16#FF#;
    end Set_Alarm;
 
---  void
---  USART1_Rx_Data (void)
---  {
---    // Check RXNE flag
---    while (!(USART1->SR & USART_SR_RXNE))
---      {
---      }
---
---    // Turn On LED if Rx data < 0x35
---    if (USART1->DR < 0x35)
---      GPIOC->ODR &= ~GPIO_ODR_OD13;
---    else
---      GPIOC->ODR |= GPIO_ODR_OD13;
---    delay ();
---  }
-
-   procedure USART1_Rx_Data is
-      use HAL;
-      Received_Char : Character;
-      Digit_Count   : Natural := 0;
-      Hour_Tens     : Natural := 0;
-      Hour_Units    : Natural := 0;
-      Min_Tens      : Natural := 0;
-      Min_Units     : Natural := 0;
-      Target_Hour   : RTC_Hour := 0;
-      Target_Min    : RTC_Minute := 0;
-   begin
-      --  Prompt user for time input
-      USART1_Send_String ("Enter feeding time (HH:MM): ");
-      
-      --  Read 4 digits for HH:MM format
-      while Digit_Count < 4 loop
-         --  Wait for character
-         loop
-            exit when USART1_Periph.SR.RXNE;
-         end loop;
-         
-         Received_Char := Character'Val (HAL.UInt9 (USART1_Periph.DR.DR));
-         
-         --  Echo the character
-         USART1_Send_Char (Received_Char);
-         
-         --  Validate and process digit
-         if Received_Char >= '0' and then Received_Char <= '9' then
-            case Digit_Count is
-               when 0 =>
-                  Hour_Tens := Character'Pos (Received_Char) - Character'Pos ('0');
-               when 1 =>
-                  Hour_Units := Character'Pos (Received_Char) - Character'Pos ('0');
-               when 2 =>
-                  Min_Tens := Character'Pos (Received_Char) - Character'Pos ('0');
-               when 3 =>
-                  Min_Units := Character'Pos (Received_Char) - Character'Pos ('0');
-               when others =>
-                  null;
-            end case;
-            Digit_Count := Digit_Count + 1;
-         elsif Received_Char = ASCII.BS or else Received_Char = ASCII.DEL then
-            --  Handle backspace
-            if Digit_Count > 0 then
-               Digit_Count := Digit_Count - 1;
-               USART1_Send_String (ASCII.BS & " " & ASCII.BS);
-            end if;
-         end if;
-      end loop;
-      
-      --  Calculate hour and minute
-      Target_Hour := RTC_Hour (Hour_Tens * 10 + Hour_Units);
-      Target_Min  := RTC_Minute (Min_Tens * 10 + Min_Units);
-      
-      --  Validate time
-      if Target_Hour > 23 or else Target_Min > 59 then
-         USART1_Send_String (ASCII.LF & ASCII.CR & "Invalid time! Using default 08:00");
-         Target_Hour := 8;
-         Target_Min  := 0;
-      else
-         USART1_Send_String (ASCII.LF & ASCII.CR & "Feeding time set to: ");
-         if Target_Hour < 10 then
-            USART1_Send_Char ('0');
-         end if;
-         USART1_Send_Char (Character'Val (Character'Pos ('0') + Natural (Target_Hour / 10)));
-         USART1_Send_Char (Character'Val (Character'Pos ('0') + Natural (Target_Hour mod 10)));
-         USART1_Send_Char (':');
-         if Target_Min < 10 then
-            USART1_Send_Char ('0');
-         end if;
-         USART1_Send_Char (Character'Val (Character'Pos ('0') + Natural (Target_Min / 10)));
-         USART1_Send_Char (Character'Val (Character'Pos ('0') + Natural (Target_Min mod 10)));
-      end if;
-      
-      USART1_Send_String (ASCII.LF & ASCII.CR);
-      
-      --  Initialize RTC with target alarm time
-      RTC_Init;
-      Set_Alarm (Target_Hour, Target_Min);
-   end USART1_Rx_Data;
-
    --  Turn LED on (active low, so set to False)
    procedure LED_On is
    begin
@@ -373,29 +276,6 @@ procedure main is
       GPIOC_Periph.ODR.ODR.Arr(13) := True;
    end LED_Off;
 
-   --  Get current time from RTC
-   function Get_Current_Time return RTC_Time is
-      Time : RTC_Time;
-      HT, HU, MNT, MNU : Natural;
-   begin
-      --  Wait for RSF (registers synchronized)
-      loop
-         exit when RTC_Periph.ISR.RSF;
-      end loop;
-      
-      --  Read time register
-      HT  := Natural (RTC_Periph.TR.HT);
-      HU  := Natural (RTC_Periph.TR.HU);
-      MNT := Natural (RTC_Periph.TR.MNT);
-      MNU := Natural (RTC_Periph.TR.MNU);
-      
-      Time.Hour := RTC_Hour (HT * 10 + HU);
-      Time.Min  := RTC_Minute (MNT * 10 + MNU);
-      Time.Sec  := 0;  --  We don't need seconds for this application
-      
-      return Time;
-   end Get_Current_Time;
-
    --  Check if alarm has triggered
    function Alarm_Triggered return Boolean is
    begin
@@ -403,10 +283,161 @@ procedure main is
    end Alarm_Triggered;
 
    --  Clear alarm flag
-   procedure Clear_Alarm_Flag is
+   procedure Clear_Alarm_Flag_Proc is
    begin
       RTC_Periph.ISR.ALRAF := False;
-   end Clear_Alarm_Flag;
+   end Clear_Alarm_Flag_Proc;
+
+   procedure USART1_Rx_Data is
+      use HAL;
+      Received_Char : Character;
+      Digit_Count   : Natural := 0;
+      Hour_Tens     : Natural := 0;
+      Hour_Units    : Natural := 0;
+      Min_Tens      : Natural := 0;
+      Min_Units     : Natural := 0;
+      Current_Hour  : RTC_Hour := 0;
+      Current_Min   : RTC_Minute := 0;
+      Target_Hour   : RTC_Hour := 0;
+      Target_Min    : RTC_Minute := 0;
+      
+      procedure Get_Time_Input (Prompt : String; H : out RTC_Hour; M : out RTC_Minute) is
+         Digit_Count_Local   : Natural := 0;
+         Hour_Tens_Local     : Natural := 0;
+         Hour_Units_Local    : Natural := 0;
+         Min_Tens_Local      : Natural := 0;
+         Min_Units_Local     : Natural := 0;
+      begin
+         USART1_Send_String (Prompt);
+         
+         --  Read 4 digits for HH:MM format (skip colon automatically)
+         while Digit_Count_Local < 4 loop
+            --  Wait for character
+            loop
+               exit when USART1_Periph.SR.RXNE;
+            end loop;
+            
+            Received_Char := Character'Val (HAL.UInt9 (USART1_Periph.DR.DR));
+            
+            --  Skip colon character
+            if Received_Char = ':' then
+               --  Echo the colon
+               USART1_Send_Char (Received_Char);
+               --  Don't increment Digit_Count_Local, just continue
+            elsif Received_Char >= '0' and then Received_Char <= '9' then
+               --  Echo the digit
+               USART1_Send_Char (Received_Char);
+               
+               case Digit_Count_Local is
+                  when 0 =>
+                     Hour_Tens_Local := Character'Pos (Received_Char) - Character'Pos ('0');
+                  when 1 =>
+                     Hour_Units_Local := Character'Pos (Received_Char) - Character'Pos ('0');
+                  when 2 =>
+                     Min_Tens_Local := Character'Pos (Received_Char) - Character'Pos ('0');
+                  when 3 =>
+                     Min_Units_Local := Character'Pos (Received_Char) - Character'Pos ('0');
+                  when others =>
+                     null;
+               end case;
+               Digit_Count_Local := Digit_Count_Local + 1;
+            elsif Received_Char = ASCII.BS or else Received_Char = ASCII.DEL then
+               --  Handle backspace
+               if Digit_Count_Local > 0 then
+                  Digit_Count_Local := Digit_Count_Local - 1;
+                  USART1_Send_String (ASCII.BS & " " & ASCII.BS);
+               end if;
+            elsif Received_Char = ASCII.CR or else Received_Char = ASCII.LF then
+               --  Ignore newline characters during input
+               null;
+            else
+               --  Echo other characters but don't process
+               USART1_Send_Char (Received_Char);
+            end if;
+         end loop;
+         
+         --  Calculate hour and minute
+         H := RTC_Hour (Hour_Tens_Local * 10 + Hour_Units_Local);
+         M := RTC_Minute (Min_Tens_Local * 10 + Min_Units_Local);
+         
+         --  Validate time
+         if H > 23 or else M > 59 then
+            USART1_Send_String (ASCII.LF & ASCII.CR & "Invalid time! Using default 08:00");
+            H := 8;
+            M := 0;
+         else
+            USART1_Send_String (ASCII.LF & ASCII.CR);
+            if H < 10 then
+               USART1_Send_Char ('0');
+            end if;
+            USART1_Send_Char (Character'Val (Character'Pos ('0') + Natural (H / 10)));
+            USART1_Send_Char (Character'Val (Character'Pos ('0') + Natural (H mod 10)));
+            USART1_Send_Char (':');
+            if M < 10 then
+               USART1_Send_Char ('0');
+            end if;
+            USART1_Send_Char (Character'Val (Character'Pos ('0') + Natural (M / 10)));
+            USART1_Send_Char (Character'Val (Character'Pos ('0') + Natural (M mod 10)));
+         end if;
+         USART1_Send_String (ASCII.LF & ASCII.CR);
+      end Get_Time_Input;
+      
+      procedure Set_Time (Hour : RTC_Hour; Minute : RTC_Minute; Second : Natural := 0) is
+         Sec_Tens  : HAL.UInt3;
+         Sec_Units : HAL.UInt4;
+         Min_Tens  : HAL.UInt3;
+         Min_Units : HAL.UInt4;
+         Hour_Tens : HAL.UInt2;
+         Hour_Units : HAL.UInt4;
+      begin
+         --  Disable write protection
+         RTC_Periph.WPR.KEY := 16#CA#;
+         RTC_Periph.WPR.KEY := 16#53#;
+         
+         --  Enter initialization mode
+         RTC_Periph.ISR.INIT := True;
+         
+         --  Wait for init flag
+         loop
+            exit when RTC_Periph.ISR.INITF;
+         end loop;
+         
+         --  Convert to BCD
+         Sec_Tens  := HAL.UInt3 (Second / 10);
+         Sec_Units := HAL.UInt4 (Second mod 10);
+         Min_Tens  := HAL.UInt3 (Minute / 10);
+         Min_Units := HAL.UInt4 (Minute mod 10);
+         Hour_Tens := HAL.UInt2 (Hour / 10);
+         Hour_Units := HAL.UInt4 (Hour mod 10);
+         
+         --  Set time registers
+         RTC_Periph.TR.ST := False;  -- Shadow transfer bypass
+         RTC_Periph.TR.HT := Hour_Tens;
+         RTC_Periph.TR.HU := Hour_Units;
+         RTC_Periph.TR.MNT := Min_Tens;
+         RTC_Periph.TR.MNU := Min_Units;
+         RTC_Periph.TR.ST := Sec_Tens;
+         RTC_Periph.TR.SU := Sec_Units;
+         
+         --  Exit initialization mode
+         RTC_Periph.ISR.INIT := False;
+         
+         --  Re-enable write protection
+         RTC_Periph.WPR.KEY := 16#FF#;
+      end Set_Time;
+      
+   begin
+      --  Initialize RTC first
+      RTC_Init;
+      
+      --  Get current time from user
+      Get_Time_Input ("Enter CURRENT time (HH:MM): ", Current_Hour, Current_Min);
+      Set_Time (Current_Hour, Current_Min, 0);
+      
+      --  Get feeding time from user
+      Get_Time_Input ("Enter FEEDING time (HH:MM): ", Target_Hour, Target_Min);
+      Set_Alarm (Target_Hour, Target_Min);
+   end USART1_Rx_Data;
 
 begin
    --  Internal High Speed clock enable
@@ -429,7 +460,7 @@ begin
       end loop;
       
       --  Clear alarm flag
-      Clear_Alarm_Flag;
+      Clear_Alarm_Flag_Proc;
       
       --  Feeding phase: LED on for 10 seconds
       LED_On;
