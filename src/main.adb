@@ -264,21 +264,29 @@ procedure main is
       RTC_Periph.WPR.KEY := 16#FF#;
    end Set_Alarm;
 
---  void
---  USART1_Rx_Data (void)
---  {
---    // Check RXNE flag
---    while (!(USART1->SR & USART_SR_RXNE))
---      {
---      }
---
---    // Turn On LED if Rx data < 0x35
---    if (USART1->DR < 0x35)
---      GPIOC->ODR &= ~GPIO_ODR_OD13;
---    else
---      GPIOC->ODR |= GPIO_ODR_OD13;
---    delay ();
---  }
+   --  Turn LED on (active low, so set to False)
+   procedure LED_On is
+   begin
+      GPIOC_Periph.ODR.ODR.Arr(13) := False;
+   end LED_On;
+
+   --  Turn LED off (active low, so set to True)
+   procedure LED_Off is
+   begin
+      GPIOC_Periph.ODR.ODR.Arr(13) := True;
+   end LED_Off;
+
+   --  Check if alarm has triggered
+   function Alarm_Triggered return Boolean is
+   begin
+      return RTC_Periph.ISR.ALRAF;
+   end Alarm_Triggered;
+
+   --  Clear alarm flag
+   procedure Clear_Alarm_Flag_Proc is
+   begin
+      RTC_Periph.ISR.ALRAF := False;
+   end Clear_Alarm_Flag_Proc;
 
    procedure USART1_Rx_Data is
       use HAL;
@@ -294,7 +302,7 @@ procedure main is
       --  Prompt user for time input
       USART1_Send_String ("Enter feeding time (HH:MM): ");
       
-      --  Read 4 digits for HH:MM format
+      --  Read 4 digits for HH:MM format (skip colon automatically)
       while Digit_Count < 4 loop
          --  Wait for character
          loop
@@ -303,11 +311,15 @@ procedure main is
          
          Received_Char := Character'Val (HAL.UInt9 (USART1_Periph.DR.DR));
          
-         --  Echo the character
-         USART1_Send_Char (Received_Char);
-         
-         --  Validate and process digit
-         if Received_Char >= '0' and then Received_Char <= '9' then
+         --  Skip colon character
+         if Received_Char = ':' then
+            --  Echo the colon
+            USART1_Send_Char (Received_Char);
+            --  Don't increment Digit_Count, just continue
+         elsif Received_Char >= '0' and then Received_Char <= '9' then
+            --  Echo the digit
+            USART1_Send_Char (Received_Char);
+            
             case Digit_Count is
                when 0 =>
                   Hour_Tens := Character'Pos (Received_Char) - Character'Pos ('0');
@@ -327,6 +339,12 @@ procedure main is
                Digit_Count := Digit_Count - 1;
                USART1_Send_String (ASCII.BS & " " & ASCII.BS);
             end if;
+         elsif Received_Char = ASCII.CR or else Received_Char = ASCII.LF then
+            --  Ignore newline characters during input
+            null;
+         else
+            --  Echo other characters but don't process
+            USART1_Send_Char (Received_Char);
          end if;
       end loop;
       
@@ -361,53 +379,6 @@ procedure main is
       Set_Alarm (Target_Hour, Target_Min);
    end USART1_Rx_Data;
 
-   --  Turn LED on (active low, so set to False)
-   procedure LED_On is
-   begin
-      GPIOC_Periph.ODR.ODR.Arr(13) := False;
-   end LED_On;
-
-   --  Turn LED off (active low, so set to True)
-   procedure LED_Off is
-   begin
-      GPIOC_Periph.ODR.ODR.Arr(13) := True;
-   end LED_Off;
-
-   --  Get current time from RTC
-   function Get_Current_Time return RTC_Time is
-      Time : RTC_Time;
-      HT, HU, MNT, MNU : Natural;
-   begin
-      --  Wait for RSF (registers synchronized)
-      loop
-         exit when RTC_Periph.ISR.RSF;
-      end loop;
-      
-      --  Read time register
-      HT  := Natural (RTC_Periph.TR.HT);
-      HU  := Natural (RTC_Periph.TR.HU);
-      MNT := Natural (RTC_Periph.TR.MNT);
-      MNU := Natural (RTC_Periph.TR.MNU);
-      
-      Time.Hour := RTC_Hour (HT * 10 + HU);
-      Time.Min  := RTC_Minute (MNT * 10 + MNU);
-      Time.Sec  := 0;  --  We don't need seconds for this application
-      
-      return Time;
-   end Get_Current_Time;
-
-   --  Check if alarm has triggered
-   function Alarm_Triggered return Boolean is
-   begin
-      return RTC_Periph.ISR.ALRAF;
-   end Alarm_Triggered;
-
-   --  Clear alarm flag
-   procedure Clear_Alarm_Flag is
-   begin
-      RTC_Periph.ISR.ALRAF := False;
-   end Clear_Alarm_Flag;
-
 begin
    --  Internal High Speed clock enable
    RCC_Periph.CR.HSION := True;
@@ -429,7 +400,7 @@ begin
       end loop;
       
       --  Clear alarm flag
-      Clear_Alarm_Flag;
+      Clear_Alarm_Flag_Proc;
       
       --  Feeding phase: LED on for 10 seconds
       LED_On;
