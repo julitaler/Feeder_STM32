@@ -182,8 +182,14 @@ procedure main is
    begin
       --  Turn on the GPIOC peripheral
       RCC_Periph.AHB1ENR.GPIOCEN := True;
-      --  Set GPIOC Pin13 Output
+      --  Set GPIOC Pin13 Output (01 = General purpose output mode)
       GPIOC_Periph.MODER.Arr(13) := 2#01#;
+      --  Set output type to Push-Pull (0)
+      GPIOC_Periph.OTYPER.Val := 0;
+      --  Set output speed (10 = High speed)
+      GPIOC_Periph.OSPEEDR.Arr(13) := 2#10#;
+      --  No pull-up/pull-down (00)
+      GPIOC_Periph.PUPDR.Arr(13) := 2#00#;
    end GPIOC_Init;
 
    --  Initialize RTC peripheral
@@ -229,6 +235,11 @@ procedure main is
       --  Exit initialization mode
       RTC_Periph.ISR.INIT := False;
       
+      --  Wait for registers synchronization
+      loop
+         exit when RTC_Periph.ISR.RSF;
+      end loop;
+      
       --  Re-enable write protection
       RTC_Periph.WPR.KEY := 16#FF#;
    end RTC_Init;
@@ -260,9 +271,11 @@ procedure main is
       Min_Tens   := HAL.UInt3 (Minute / 10);
       Min_Units  := HAL.UInt4 (Minute mod 10);
       
-      --  Set alarm time (mask seconds and date to match every day)
-      RTC_Periph.ALRMAR.MSK1 := True;  -- Mask seconds
-      RTC_Periph.ALRMAR.MSK4 := True;  -- Mask date/day
+      --  Set alarm time (match exact HH:MM every day)
+      RTC_Periph.ALRMAR.MSK1 := True;  -- Mask seconds (match any second)
+      RTC_Periph.ALRMAR.MSK2 := False; -- Do NOT mask minutes - must match exactly
+      RTC_Periph.ALRMAR.MSK3 := False; -- Do NOT mask hours - must match exactly  
+      RTC_Periph.ALRMAR.MSK4 := True;  -- Mask date/day (match any day)
       
       RTC_Periph.ALRMAR.HT := Hour_Tens;
       RTC_Periph.ALRMAR.HU := Hour_Units;
@@ -272,23 +285,28 @@ procedure main is
       --  Enable Alarm A
       RTC_Periph.CR.ALRAE := True;
       
-      --  Clear any pending alarm flag
+      --  Wait for registers synchronization
+      loop
+         exit when RTC_Periph.ISR.RSF;
+      end loop;
+      
+      --  Clear ALRAF flag by writing 0 (required for EXTI line 17)
       RTC_Periph.ISR.ALRAF := False;
       
       --  Re-enable write protection
       RTC_Periph.WPR.KEY := 16#FF#;
    end Set_Alarm;
 
-   --  Turn LED on (active low, so set to False)
+   --  Turn LED on (active low, so reset pin to GND)
    procedure LED_On is
    begin
-      GPIOC_Periph.ODR.ODR.Arr(13) := False;
+      GPIOC_Periph.BSRR.BR.Val := 2 ** 13;  -- Reset bit 13 (output low = LED on)
    end LED_On;
 
-   --  Turn LED off (active low, so set to True)
+   --  Turn LED off (active low, so set pin to VCC)
    procedure LED_Off is
    begin
-      GPIOC_Periph.ODR.ODR.Arr(13) := True;
+      GPIOC_Periph.BSRR.BS.Val := 2 ** 13;  -- Set bit 13 (output high = LED off)
    end LED_Off;
 
    --  Check if alarm has triggered
@@ -297,7 +315,7 @@ procedure main is
       return RTC_Periph.ISR.ALRAF;
    end Alarm_Triggered;
 
-   --  Clear alarm flag
+   --  Clear alarm flag by writing 0 to ALRAF bit
    procedure Clear_Alarm_Flag_Proc is
    begin
       RTC_Periph.ISR.ALRAF := False;
