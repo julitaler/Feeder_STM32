@@ -36,6 +36,7 @@
 --
 with HAL;
 with HAL.Real_Time_Clock;  use HAL.Real_Time_Clock;
+with Interfaces;
 with STM32_SVD.RCC;   use STM32_SVD.RCC;
 with STM32_SVD.GPIO;  use STM32_SVD.GPIO;
 with STM32_SVD.USART; use STM32_SVD.USART;
@@ -299,16 +300,14 @@ procedure main is
 
    --  Turn LED on (active low, so reset pin to GND)
    procedure LED_On is
-      use Interfaces;
    begin
-      GPIOC_Periph.BSRR.BR.Val := Unsigned_16 (2 ** 13);  -- Reset bit 13 (output low = LED on)
+      GPIOC_Periph.BSRR.BR.Val := Interfaces.Unsigned_16 (2 ** 13);  -- Reset bit 13 (output low = LED on)
    end LED_On;
 
    --  Turn LED off (active low, so set pin to VCC)
    procedure LED_Off is
-      use Interfaces;
    begin
-      GPIOC_Periph.BSRR.BS.Val := Unsigned_16 (2 ** 13);  -- Set bit 13 (output high = LED off)
+      GPIOC_Periph.BSRR.BS.Val := Interfaces.Unsigned_16 (2 ** 13);  -- Set bit 13 (output high = LED off)
    end LED_Off;
 
    --  Check if alarm has triggered
