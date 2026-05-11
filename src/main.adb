@@ -192,14 +192,28 @@ procedure main is
       --  Enable PWR peripheral clock
       RCC_Periph.APB1ENR.PWREN := True;
       
+      --  Enable backup domain access
+      PWR_Periph.CR.DBP := True;
+      
+      --  Enable LSE (External Low-Speed oscillator - 32.768 kHz)
+      RCC_Periph.BDCR.LSEON := True;
+      
+      --  Wait for LSE ready
+      loop
+         exit when RCC_Periph.BDCR.LSERDY;
+      end loop;
+      
+      --  Select LSE as RTC clock source (RTCSEL = 01)
+      RCC_Periph.BDCR.RTCSEL.Val := 1;
+      
+      --  Enable RTC clock
+      RCC_Periph.BDCR.RTCEN := True;
+      
       --  Disable write protection for RTC registers
       RTC_Periph.WPR.KEY := 16#CA#;
       RTC_Periph.WPR.KEY := 16#53#;
       
       --  Enter initialization mode
-      loop
-         exit when RTC_Periph.ISR.INITF;
-      end loop;
       RTC_Periph.ISR.INIT := True;
       
       --  Wait for init flag
@@ -207,9 +221,10 @@ procedure main is
          exit when RTC_Periph.ISR.INITF;
       end loop;
       
-      --  Set prescaler for 1Hz (assuming LSE = 32.768 kHz)
+      --  Set prescaler for 1Hz (LSE = 32.768 kHz)
       RTC_Periph.PRER.PREDIV_A := 16#7F#;  -- 127
       RTC_Periph.PRER.PREDIV_S := 16#FF#;  -- 255
+      --  Actual: 32768 / (128 * 256) = 1 Hz
       
       --  Exit initialization mode
       RTC_Periph.ISR.INIT := False;
