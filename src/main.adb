@@ -43,10 +43,10 @@ procedure main is
 
    --  Simple delay loop (approximate, based on 16MHz clock)
    procedure Delay_Ms (Ms : Natural) is
-      Counter : Natural;
+      Counter : HAL.UInt32;
    begin
       for M in 1 .. Ms loop
-         Counter := 4000;  --  Approximate for 1ms at 16MHz
+         Counter := 2000;  --  Approximate for 1ms at 16MHz (adjusted for accuracy)
          while Counter > 0 loop
             Counter := Counter - 1;
          end loop;
