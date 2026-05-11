@@ -25,8 +25,9 @@
 --  WeAct BlackPill STM32F411CEU6
 --  GPIOC Pin13 --> LED
 --  USART1 RX -->GPIOA Pin10
---  * If ASCII char Rx < 5, Turn On LED
---  * Minicom : press 3, LED On. Press 9, LED Off
+--  * Feeder controller
+--  * LED on for 10 seconds every 20 minutes
+--  * UART outputs "Feeding..." during LED on, "Idle..." during waiting
 --  * HSI=16 MHz,APB2ENR = 16MHz
 --  * Bps/Par/Bits : 115200/-/8N1
 --  * Hardware Flow Control = No
@@ -39,6 +40,37 @@ with STM32_SVD.GPIO;  use STM32_SVD.GPIO;
 with STM32_SVD.USART; use STM32_SVD.USART;
 
 procedure main is
+
+   --  Simple delay loop (approximate, based on 16MHz clock)
+   procedure Delay_Ms (Ms : Natural) is
+      Counter : Natural;
+   begin
+      for M in 1 .. Ms loop
+         Counter := 4000;  --  Approximate for 1ms at 16MHz
+         while Counter > 0 loop
+            Counter := Counter - 1;
+         end loop;
+      end loop;
+   end Delay_Ms;
+
+   --  Send a character via USART1
+   procedure USART1_Send_Char (C : Character) is
+   begin
+      --  Wait until TXE (Transmit Data Register Empty) is set
+      loop
+         exit when USART1_Periph.SR.TXE;
+      end loop;
+      --  Write character to DR
+      USART1_Periph.DR.DR := HAL.UInt9 (Character'Pos (C));
+   end USART1_Send_Char;
+
+   --  Send a string via USART1
+   procedure USART1_Send_String (S : String) is
+   begin
+      for I in S'Range loop
+         USART1_Send_Char (S (I));
+      end loop;
+   end USART1_Send_String;
 
    procedure USART1_Init is
   --
@@ -171,30 +203,20 @@ procedure main is
    procedure USART1_Rx_Data is
       use HAL;
    begin
-      --  Этот бит устанавливается аппаратно,
-      --  когда содержимое сдвигового регистра RDR передано в регистр USART_DR.
-      --  Прерывание генерируется, если RXNEIE=1 в регистре USART_CR1.
-      --  Оно сбрасывается при чтении в регистр USART_DR.
-      --  Флаг RXNE также можно сбросить, записав в него ноль.
-      --  Эта последовательность сброса рекомендуется только
-      --  для многобуферной связи.
-      --
-      --  0: Данные не получены
-      --  1: Полученные данные готовы к чтению.
-      --  Check RXNE flag
-      loop
-         exit when USART1_Periph.SR.RXNE ;
-      end loop;
-      --  Turn On LED if Rx data < 0x35
-      if USART1_Periph.DR.DR < UInt9(16#35#)
-      then
-         GPIOC_Periph.ODR.ODR.Arr(13) := False;
-      else
-         GPIOC_Periph.ODR.ODR.Arr(13) := True;
-      end if;
-      null;
-      null;
+      null;  --  Not used in feeder mode
    end USART1_Rx_Data;
+
+   --  Turn LED on (active low, so set to False)
+   procedure LED_On is
+   begin
+      GPIOC_Periph.ODR.ODR.Arr(13) := False;
+   end LED_On;
+
+   --  Turn LED off (active low, so set to True)
+   procedure LED_Off is
+   begin
+      GPIOC_Periph.ODR.ODR.Arr(13) := True;
+   end LED_Off;
 
 begin
    --  Internal High Speed clock enable
@@ -204,9 +226,22 @@ begin
    end loop;
    USART1_Init;
    GPIOC_Init;
-   --
+   
+   --  Main loop: Feeder controller
+   --  Cycle: 20 minutes total
+   --  - LED on for 10 seconds, output "Feeding..."
+   --  - LED off for remaining time (~19 min 50 sec), output "Idle..."
    loop
-      USART1_Rx_Data;
-      null;
+      --  Feeding phase: LED on for 10 seconds
+      LED_On;
+      USART1_Send_String ("Feeding...");
+      USART1_Send_String (ASCII.LF & ASCII.CR);
+      Delay_Ms (10000);  --  10 seconds
+      
+      --  Idle phase: LED off for ~20 minutes minus 10 seconds
+      LED_Off;
+      USART1_Send_String ("Idle...");
+      USART1_Send_String (ASCII.LF & ASCII.CR);
+      Delay_Ms (20 * 60 * 1000 - 10000);  --  20 minutes - 10 seconds = 1190000 ms
    end loop;
 end main;
