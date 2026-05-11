@@ -186,6 +186,83 @@ procedure main is
       GPIOC_Periph.MODER.Arr(13) := 2#01#;
    end GPIOC_Init;
 
+   --  Initialize RTC peripheral
+   procedure RTC_Init is
+   begin
+      --  Enable PWR peripheral clock
+      RCC_Periph.APB1ENR.PWREN := True;
+      
+      --  Disable write protection for RTC registers
+      RTC_Periph.WPR.KEY := 16#CA#;
+      RTC_Periph.WPR.KEY := 16#53#;
+      
+      --  Enter initialization mode
+      loop
+         exit when RTC_Periph.ISR.INITF;
+      end loop;
+      RTC_Periph.ISR.INIT := True;
+      
+      --  Wait for init flag
+      loop
+         exit when RTC_Periph.ISR.INITF;
+      end loop;
+      
+      --  Set prescaler for 1Hz (assuming LSE = 32.768 kHz)
+      RTC_Periph.PRER.PREDIV_A := 16#7F#;  -- 127
+      RTC_Periph.PRER.PREDIV_S := 16#FF#;  -- 255
+      
+      --  Exit initialization mode
+      RTC_Periph.ISR.INIT := False;
+      
+      --  Re-enable write protection
+      RTC_Periph.WPR.KEY := 16#FF#;
+   end RTC_Init;
+
+   --  Set alarm time for feeding
+   procedure Set_Alarm (Hour : RTC_Hour; Minute : RTC_Minute) is
+      Hour_Tens  : HAL.UInt2;
+      Hour_Units : HAL.UInt4;
+      Min_Tens   : HAL.UInt3;
+      Min_Units  : HAL.UInt4;
+   begin
+      --  Disable write protection
+      RTC_Periph.WPR.KEY := 16#CA#;
+      RTC_Periph.WPR.KEY := 16#53#;
+      
+      --  Disable Alarm A
+      RTC_Periph.CR.ALRAE := False;
+      
+      --  Wait until ALRAWF is set
+      loop
+         exit when RTC_Periph.ISR.ALRAWF;
+      end loop;
+      
+      --  Convert hour to BCD
+      Hour_Tens  := HAL.UInt2 (Hour / 10);
+      Hour_Units := HAL.UInt4 (Hour mod 10);
+      
+      --  Convert minute to BCD
+      Min_Tens   := HAL.UInt3 (Minute / 10);
+      Min_Units  := HAL.UInt4 (Minute mod 10);
+      
+      --  Set alarm time (mask seconds and date to match every day)
+      RTC_Periph.ALRMAR.MSK1 := True;  -- Mask seconds
+      RTC_Periph.ALRMAR.MSK4 := True;  -- Mask date/day
+      
+      RTC_Periph.ALRMAR.HT := Hour_Tens;
+      RTC_Periph.ALRMAR.HU := Hour_Units;
+      RTC_Periph.ALRMAR.MNT := Min_Tens;
+      RTC_Periph.ALRMAR.MNU := Min_Units;
+      
+      --  Enable Alarm A
+      RTC_Periph.CR.ALRAE := True;
+      
+      --  Clear any pending alarm flag
+      RTC_Periph.ISR.ALRAF := False;
+      
+      --  Re-enable write protection
+      RTC_Periph.WPR.KEY := 16#FF#;
+   end Set_Alarm;
 
 --  void
 --  USART1_Rx_Data (void)
@@ -295,84 +372,6 @@ procedure main is
    begin
       GPIOC_Periph.ODR.ODR.Arr(13) := True;
    end LED_Off;
-
-   --  Initialize RTC peripheral
-   procedure RTC_Init is
-   begin
-      --  Enable PWR peripheral clock
-      RCC_Periph.APB1ENR.PWREN := True;
-      
-      --  Disable write protection for RTC registers
-      RTC_Periph.WPR.KEY := 16#CA#;
-      RTC_Periph.WPR.KEY := 16#53#;
-      
-      --  Enter initialization mode
-      loop
-         exit when RTC_Periph.ISR.INITF;
-      end loop;
-      RTC_Periph.ISR.INIT := True;
-      
-      --  Wait for init flag
-      loop
-         exit when RTC_Periph.ISR.INITF;
-      end loop;
-      
-      --  Set prescaler for 1Hz (assuming LSE = 32.768 kHz)
-      RTC_Periph.PRER.PREDIV_A := 16#7F#;  -- 127
-      RTC_Periph.PRER.PREDIV_S := 16#FF#;  -- 255
-      
-      --  Exit initialization mode
-      RTC_Periph.ISR.INIT := False;
-      
-      --  Re-enable write protection
-      RTC_Periph.WPR.KEY := 16#FF#;
-   end RTC_Init;
-
-   --  Set alarm time for feeding
-   procedure Set_Alarm (Hour : RTC_Hour; Minute : RTC_Minute) is
-      Hour_Tens  : HAL.UInt2;
-      Hour_Units : HAL.UInt4;
-      Min_Tens   : HAL.UInt3;
-      Min_Units  : HAL.UInt4;
-   begin
-      --  Disable write protection
-      RTC_Periph.WPR.KEY := 16#CA#;
-      RTC_Periph.WPR.KEY := 16#53#;
-      
-      --  Disable Alarm A
-      RTC_Periph.CR.ALRAE := False;
-      
-      --  Wait until ALRAWF is set
-      loop
-         exit when RTC_Periph.ISR.ALRAWF;
-      end loop;
-      
-      --  Convert hour to BCD
-      Hour_Tens  := HAL.UInt2 (Hour / 10);
-      Hour_Units := HAL.UInt4 (Hour mod 10);
-      
-      --  Convert minute to BCD
-      Min_Tens   := HAL.UInt3 (Minute / 10);
-      Min_Units  := HAL.UInt4 (Minute mod 10);
-      
-      --  Set alarm time (mask seconds and date to match every day)
-      RTC_Periph.ALRMAR.MSK1 := True;  -- Mask seconds
-      RTC_Periph.ALRMAR.MSK4 := True;  -- Mask date/day
-      
-      RTC_Periph.ALRMAR.HT := Hour_Tens;
-      RTC_Periph.ALRMAR.HU := Hour_Units;
-      RTC_Periph.ALRMAR.MNT := Min_Tens;
-      RTC_Periph.ALRMAR.MNU := Min_Units;
-      
-      --  Enable Alarm A
-      RTC_Periph.CR.ALRAE := True;
-      
-      --  Clear any pending alarm flag
-      RTC_Periph.ISR.ALRAF := False;
-      
-      --  Re-enable write protection
-      RTC_Periph.WPR.KEY := 16#FF#;
-   end Set_Alarm;
 
    --  Get current time from RTC
    function Get_Current_Time return RTC_Time is
