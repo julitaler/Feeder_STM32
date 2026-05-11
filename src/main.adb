@@ -301,13 +301,13 @@ procedure main is
    --  Turn LED on (active low, so reset pin to GND)
    procedure LED_On is
    begin
-      GPIOC_Periph.BSRR.BR.Val := Interfaces.Unsigned_16 (2 ** 13);  -- Reset bit 13 (output low = LED on)
+      GPIOC_Periph.BSRR.BR.Val := HAL.UInt16 (2 ** 13);  -- Reset bit 13 (output low = LED on)
    end LED_On;
 
    --  Turn LED off (active low, so set pin to VCC)
    procedure LED_Off is
    begin
-      GPIOC_Periph.BSRR.BS.Val := Interfaces.Unsigned_16 (2 ** 13);  -- Set bit 13 (output high = LED off)
+      GPIOC_Periph.BSRR.BS.Val := HAL.UInt16 (2 ** 13);  -- Set bit 13 (output high = LED off)
    end LED_Off;
 
    --  Check if alarm has triggered
