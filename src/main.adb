@@ -26,8 +26,8 @@
 --  GPIOC Pin13 --> LED
 --  USART1 RX -->GPIOA Pin10
 --  * Feeder controller
---  * LED on for 10 seconds every 20 minutes
---  * UART outputs "Feeding..." during LED on, "Idle..." during waiting
+--  * LED on for 10 seconds at specified time (HH:MM)
+--  * UART outputs prompts for time input and "Feeding..." during LED on
 --  * HSI=16 MHz,APB2ENR = 16MHz
 --  * Bps/Par/Bits : 115200/-/8N1
 --  * Hardware Flow Control = No
@@ -35,9 +35,12 @@
 --  *
 --
 with HAL;
+with HAL.Real_Time_Clock;  use HAL.Real_Time_Clock;
 with STM32_SVD.RCC;   use STM32_SVD.RCC;
 with STM32_SVD.GPIO;  use STM32_SVD.GPIO;
 with STM32_SVD.USART; use STM32_SVD.USART;
+with STM32_SVD.RTC;   use STM32_SVD.RTC;
+with STM32_SVD.PWR;   use STM32_SVD.PWR;
 
 procedure main is
 
@@ -202,8 +205,83 @@ procedure main is
 
    procedure USART1_Rx_Data is
       use HAL;
+      Received_Char : Character;
+      Digit_Count   : Natural := 0;
+      Hour_Tens     : Natural := 0;
+      Hour_Units    : Natural := 0;
+      Min_Tens      : Natural := 0;
+      Min_Units     : Natural := 0;
+      Target_Hour   : RTC_Hour := 0;
+      Target_Min    : RTC_Minute := 0;
    begin
-      null;  --  Not used in feeder mode
+      --  Prompt user for time input
+      USART1_Send_String ("Enter feeding time (HH:MM): ");
+      
+      --  Read 4 digits for HH:MM format
+      while Digit_Count < 4 loop
+         --  Wait for character
+         loop
+            exit when USART1_Periph.SR.RXNE;
+         end loop;
+         
+         Received_Char := Character'Val (HAL.UInt9 (USART1_Periph.DR.DR));
+         
+         --  Echo the character
+         USART1_Send_Char (Received_Char);
+         
+         --  Validate and process digit
+         if Received_Char >= '0' and then Received_Char <= '9' then
+            case Digit_Count is
+               when 0 =>
+                  Hour_Tens := Character'Pos (Received_Char) - Character'Pos ('0');
+               when 1 =>
+                  Hour_Units := Character'Pos (Received_Char) - Character'Pos ('0');
+               when 2 =>
+                  Min_Tens := Character'Pos (Received_Char) - Character'Pos ('0');
+               when 3 =>
+                  Min_Units := Character'Pos (Received_Char) - Character'Pos ('0');
+               when others =>
+                  null;
+            end case;
+            Digit_Count := Digit_Count + 1;
+         elsif Received_Char = ASCII.BS or else Received_Char = ASCII.DEL then
+            --  Handle backspace
+            if Digit_Count > 0 then
+               Digit_Count := Digit_Count - 1;
+               USART1_Send_String (ASCII.BS & " " & ASCII.BS);
+            end if;
+         end if;
+      end loop;
+      
+      --  Calculate hour and minute
+      Target_Hour := RTC_Hour (Hour_Tens * 10 + Hour_Units);
+      Target_Min  := RTC_Minute (Min_Tens * 10 + Min_Units);
+      
+      --  Validate time
+      if Target_Hour > 23 or else Target_Min > 59 then
+         USART1_Send_String (ASCII.LF & ASCII.CR & "Invalid time! Using default 08:00");
+         Target_Hour := 8;
+         Target_Min  := 0;
+      else
+         USART1_Send_String (ASCII.LF & ASCII.CR & "Feeding time set to: ");
+         if Target_Hour < 10 then
+            USART1_Send_Char ('0');
+         end if;
+         USART1_Send_Char (Character'Val (Character'Pos ('0') + Natural (Target_Hour / 10)));
+         USART1_Send_Char (Character'Val (Character'Pos ('0') + Natural (Target_Hour mod 10)));
+         USART1_Send_Char (':');
+         if Target_Min < 10 then
+            USART1_Send_Char ('0');
+         end if;
+         USART1_Send_Char (Character'Val (Character'Pos ('0') + Natural (Target_Min / 10)));
+         USART1_Send_Char (Character'Val (Character'Pos ('0') + Natural (Target_Min mod 10)));
+      end if;
+      
+      USART1_Send_String (ASCII.LF & ASCII.CR);
+      
+      --  Initialize RTC with target alarm time
+      RTC_Init;
+      Set_Alarm (Target_Hour, Target_Min);
    end USART1_Rx_Data;
 
    --  Turn LED on (active low, so set to False)
@@ -218,6 +296,119 @@ procedure main is
       GPIOC_Periph.ODR.ODR.Arr(13) := True;
    end LED_Off;
 
+   --  Initialize RTC peripheral
+   procedure RTC_Init is
+   begin
+      --  Enable PWR peripheral clock
+      RCC_Periph.APB1ENR.PWREN := True;
+      
+      --  Disable write protection for RTC registers
+      RTC_Periph.WPR.KEY := 16#CA#;
+      RTC_Periph.WPR.KEY := 16#53#;
+      
+      --  Enter initialization mode
+      loop
+         exit when RTC_Periph.ISR.INITF;
+      end loop;
+      RTC_Periph.ISR.INIT := True;
+      
+      --  Wait for init flag
+      loop
+         exit when RTC_Periph.ISR.INITF;
+      end loop;
+      
+      --  Set prescaler for 1Hz (assuming LSE = 32.768 kHz)
+      RTC_Periph.PRER.PREDIV_A := 16#7F#;  -- 127
+      RTC_Periph.PRER.PREDIV_S := 16#FF#;  -- 255
+      
+      --  Exit initialization mode
+      RTC_Periph.ISR.INIT := False;
+      
+      --  Re-enable write protection
+      RTC_Periph.WPR.KEY := 16#FF#;
+   end RTC_Init;
+
+   --  Set alarm time for feeding
+   procedure Set_Alarm (Hour : RTC_Hour; Minute : RTC_Minute) is
+      Hour_Tens  : HAL.UInt2;
+      Hour_Units : HAL.UInt4;
+      Min_Tens   : HAL.UInt3;
+      Min_Units  : HAL.UInt4;
+   begin
+      --  Disable write protection
+      RTC_Periph.WPR.KEY := 16#CA#;
+      RTC_Periph.WPR.KEY := 16#53#;
+      
+      --  Disable Alarm A
+      RTC_Periph.CR.ALRAE := False;
+      
+      --  Wait until ALRAWF is set
+      loop
+         exit when RTC_Periph.ISR.ALRAWF;
+      end loop;
+      
+      --  Convert hour to BCD
+      Hour_Tens  := HAL.UInt2 (Hour / 10);
+      Hour_Units := HAL.UInt4 (Hour mod 10);
+      
+      --  Convert minute to BCD
+      Min_Tens   := HAL.UInt3 (Minute / 10);
+      Min_Units  := HAL.UInt4 (Minute mod 10);
+      
+      --  Set alarm time (mask seconds and date to match every day)
+      RTC_Periph.ALRMAR.MSK1 := True;  -- Mask seconds
+      RTC_Periph.ALRMAR.MSK4 := True;  -- Mask date/day
+      
+      RTC_Periph.ALRMAR.HT := Hour_Tens;
+      RTC_Periph.ALRMAR.HU := Hour_Units;
+      RTC_Periph.ALRMAR.MNT := Min_Tens;
+      RTC_Periph.ALRMAR.MNU := Min_Units;
+      
+      --  Enable Alarm A
+      RTC_Periph.CR.ALRAE := True;
+      
+      --  Clear any pending alarm flag
+      RTC_Periph.ISR.ALRAF := False;
+      
+      --  Re-enable write protection
+      RTC_Periph.WPR.KEY := 16#FF#;
+   end Set_Alarm;
+
+   --  Get current time from RTC
+   function Get_Current_Time return RTC_Time is
+      Time : RTC_Time;
+      HT, HU, MNT, MNU : Natural;
+   begin
+      --  Wait for RSF (registers synchronized)
+      loop
+         exit when RTC_Periph.ISR.RSF;
+      end loop;
+      
+      --  Read time register
+      HT  := Natural (RTC_Periph.TR.HT);
+      HU  := Natural (RTC_Periph.TR.HU);
+      MNT := Natural (RTC_Periph.TR.MNT);
+      MNU := Natural (RTC_Periph.TR.MNU);
+      
+      Time.Hour := RTC_Hour (HT * 10 + HU);
+      Time.Min  := RTC_Minute (MNT * 10 + MNU);
+      Time.Sec  := 0;  --  We don't need seconds for this application
+      
+      return Time;
+   end Get_Current_Time;
+
+   --  Check if alarm has triggered
+   function Alarm_Triggered return Boolean is
+   begin
+      return RTC_Periph.ISR.ALRAF;
+   end Alarm_Triggered;
+
+   --  Clear alarm flag
+   procedure Clear_Alarm_Flag is
+   begin
+      RTC_Periph.ISR.ALRAF := False;
+   end Clear_Alarm_Flag;
+
 begin
    --  Internal High Speed clock enable
    RCC_Periph.CR.HSION := True;
@@ -227,21 +418,29 @@ begin
    USART1_Init;
    GPIOC_Init;
    
+   --  Prompt user for feeding time and initialize RTC
+   USART1_Rx_Data;
+   
    --  Main loop: Feeder controller
-   --  Cycle: 20 minutes total
-   --  - LED on for 10 seconds, output "Feeding..."
-   --  - LED off for remaining time (~19 min 50 sec), output "Idle..."
+   --  Wait for alarm time and turn LED on for 10 seconds
    loop
+      --  Wait for alarm to trigger
+      loop
+         exit when Alarm_Triggered;
+      end loop;
+      
+      --  Clear alarm flag
+      Clear_Alarm_Flag;
+      
       --  Feeding phase: LED on for 10 seconds
       LED_On;
       USART1_Send_String ("Feeding...");
       USART1_Send_String (ASCII.LF & ASCII.CR);
       Delay_Ms (10000);  --  10 seconds
       
-      --  Idle phase: LED off for ~20 minutes minus 10 seconds
+      --  Turn LED off after feeding
       LED_Off;
       USART1_Send_String ("Idle...");
       USART1_Send_String (ASCII.LF & ASCII.CR);
-      Delay_Ms (20 * 60 * 1000 - 10000);  --  20 minutes - 10 seconds = 1190000 ms
    end loop;
 end main;
