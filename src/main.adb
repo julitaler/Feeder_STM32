@@ -411,13 +411,12 @@ procedure main is
          Hour_Units := HAL.UInt4 (Hour mod 10);
          
          --  Set time registers
-         RTC_Periph.TR.ST := False;  -- Shadow transfer bypass
-         RTC_Periph.TR.HT := Hour_Tens;
-         RTC_Periph.TR.HU := Hour_Units;
-         RTC_Periph.TR.MNT := Min_Tens;
-         RTC_Periph.TR.MNU := Min_Units;
-         RTC_Periph.TR.ST := Sec_Tens;
          RTC_Periph.TR.SU := Sec_Units;
+         RTC_Periph.TR.ST := Sec_Tens;
+         RTC_Periph.TR.MNU := Min_Units;
+         RTC_Periph.TR.MNT := Min_Tens;
+         RTC_Periph.TR.HU := Hour_Units;
+         RTC_Periph.TR.HT := Hour_Tens;
          
          --  Exit initialization mode
          RTC_Periph.ISR.INIT := False;
