@@ -185,7 +185,7 @@ procedure main is
       --  Set GPIOC Pin13 Output (01 = General purpose output mode)
       GPIOC_Periph.MODER.Arr(13) := 2#01#;
       --  Set output type to Push-Pull (0)
-      GPIOC_Periph.OTYPER.Val := 0;
+      GPIOC_Periph.OTYPER.OT.Val := 0;
       --  Set output speed (10 = High speed)
       GPIOC_Periph.OSPEEDR.Arr(13) := 2#10#;
       --  No pull-up/pull-down (00)
@@ -299,14 +299,16 @@ procedure main is
 
    --  Turn LED on (active low, so reset pin to GND)
    procedure LED_On is
+      use Interfaces;
    begin
-      GPIOC_Periph.BSRR.BR.Val := 2 ** 13;  -- Reset bit 13 (output low = LED on)
+      GPIOC_Periph.BSRR.BR.Val := Unsigned_16 (2 ** 13);  -- Reset bit 13 (output low = LED on)
    end LED_On;
 
    --  Turn LED off (active low, so set pin to VCC)
    procedure LED_Off is
+      use Interfaces;
    begin
-      GPIOC_Periph.BSRR.BS.Val := 2 ** 13;  -- Set bit 13 (output high = LED off)
+      GPIOC_Periph.BSRR.BS.Val := Unsigned_16 (2 ** 13);  -- Set bit 13 (output high = LED off)
    end LED_Off;
 
    --  Check if alarm has triggered
